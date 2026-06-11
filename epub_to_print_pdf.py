@@ -370,13 +370,11 @@ def convert_html_to_pdf(html_path, pdf_path, browser_path):
         "--print-to-pdf-no-header",
         html_path
     ]
-    print(f"Renderizando HTML para PDF A5 usando {os.path.basename(browser_path)}...")
     result = subprocess.run(args, capture_output=True, text=True)
     if result.returncode != 0:
-        print("Erro durante a conversão del navegador:")
+        print("Erro durante a conversão do navegador:")
         print(result.stderr)
         raise RuntimeError(f"O navegador falhou com código {result.returncode}")
-    print("PDF A5 intermediário gerado.")
 
 def generate_page_numbers_pdf(num_pages, output_pdf_path, browser_path, temp_dir):
     """Gera um PDF A5 contendo apenas os números das páginas centralizados no rodapé."""
@@ -486,7 +484,6 @@ def impose_pdf(input_pdf_path, output_pdf_path, mode, signature_size=16, line_pa
             logical_pages.append(PageObject.create_blank_page(width=first.mediabox.width, height=first.mediabox.height))
             
     total_physical_pages = total_pages_needed // 4
-    print(f"Imprimindo em {total_physical_pages} folhas A4 físicas (Frente e Verso)...")
     
     if mode == 'sequencial':
         for i in range(total_physical_pages):
@@ -547,7 +544,6 @@ def impose_pdf(input_pdf_path, output_pdf_path, mode, signature_size=16, line_pa
                 
     with open(output_pdf_path, 'wb') as out_f:
         writer.write(out_f)
-    print(f"PDF final com imposição gravado com sucesso em: {output_pdf_path}")
 
 def run_pipeline(epub_path, output_pdf_path, font_size, margin, font_family, mode, signature_size, chapters_filter=None, browser_path=None):
     """Coordena todas as etapas do processo."""
@@ -556,8 +552,10 @@ def run_pipeline(epub_path, output_pdf_path, font_size, margin, font_family, mod
         if not browser_path:
             raise RuntimeError("Não foi possível encontrar nenhum navegador compatível (Brave ou Edge).")
             
-    print(f"Navegador selecionado: {browser_path}")
-    
+    print(f"\n[+] Processando: {os.path.basename(epub_path)}")
+    if chapters_filter:
+        print(f"[+] Capítulos selecionados: {chapters_filter}")
+        
     temp_dir = tempfile.mkdtemp()
     try:
         # 1. Gerar o PDF temporário contendo apenas a linha de corte vertical central
@@ -611,16 +609,13 @@ def run_pipeline(epub_path, output_pdf_path, font_size, margin, font_family, mod
         line_page = line_reader.pages[0]
         
         # 2. Extrair EPUB
-        print(f"Extraindo EPUB '{epub_path}'...")
         with zipfile.ZipFile(epub_path, 'r') as zip_ref:
             zip_ref.extractall(temp_dir)
             
         opf_rel_path = find_opf_path(temp_dir)
-        print(f"Arquivo OPF encontrado: {opf_rel_path}")
         
         chapter_hrefs = parse_opf(temp_dir, opf_rel_path)
         total_chapters = len(chapter_hrefs)
-        print(f"Total de capítulos no livro: {total_chapters}")
         
         opf_dir = os.path.dirname(opf_rel_path)
         toc_map = parse_toc(temp_dir, opf_rel_path)
@@ -662,16 +657,8 @@ def run_pipeline(epub_path, output_pdf_path, font_size, margin, font_family, mod
             pdf_dir = "pdf"
             os.makedirs(pdf_dir, exist_ok=True)
             output_pdf_path = os.path.join(pdf_dir, f"{book_short_name}{ch_suffix}.pdf")
-            print(f"Caminho do PDF de saída definido automaticamente: {output_pdf_path}")
-            
         if chapters_filter:
             selected_indices = parse_chapters_selection(chapters_filter, total_chapters)
-            print(f"Filtro aplicado: capítulos {', '.join(str(i+1) for i in selected_indices)}")
-            
-            for idx in selected_indices:
-                title = get_chapter_title(temp_dir, opf_dir, chapter_hrefs[idx], idx, toc_map)
-                print(f"  -> Incluindo: {title}")
-                
             chapter_hrefs = [chapter_hrefs[i] for i in selected_indices]
         
         # 3. HTML temporário consolidado
@@ -693,7 +680,6 @@ def run_pipeline(epub_path, output_pdf_path, font_size, margin, font_family, mod
         # 5. Ler as páginas A5 para gerar o PDF de numeração
         reader_a5 = PdfReader(temp_pdf_a5_raw)
         num_pages_logical = len(reader_a5.pages)
-        print(f"Total de páginas lógicas geradas no A5: {num_pages_logical}")
         
         # 6. Gerar PDF contendo apenas os números das páginas nas mesmas dimensões A5
         temp_pdf_numbers = os.path.join(temp_dir, "temp_numbers.pdf")
@@ -716,10 +702,10 @@ def run_pipeline(epub_path, output_pdf_path, font_size, margin, font_family, mod
         
         # 8. Imposição final com a linha de corte
         impose_pdf(temp_pdf_a5_numbered, output_pdf_path, mode, signature_size, line_page)
+        print(f"[+] PDF final gerado com sucesso em: {output_pdf_path}")
         
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
-        print("Limpeza de arquivos temporários concluída.")
 
 def main():
     parser = argparse.ArgumentParser(description="Conversor de EPUB para PDF otimizado para impressão econômica (4 páginas por folha A4 frente/verso).")

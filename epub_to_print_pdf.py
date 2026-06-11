@@ -696,29 +696,34 @@ def main():
     
     args = parser.parse_args()
     
+    # Garantir que as pastas epub e pdf existam
+    epub_dir = "epub"
+    pdf_dir = "pdf"
+    os.makedirs(epub_dir, exist_ok=True)
+    os.makedirs(pdf_dir, exist_ok=True)
+    
     if not args.epub:
         print("=== CONVERSOR DE EPUB PARA PDF DE IMPRESSÃO ECONÔMICA ===")
         
-        current_dir = os.getcwd()
-        epubs = [f for f in os.listdir(current_dir) if f.lower().endswith('.epub') and os.path.isfile(os.path.join(current_dir, f))]
+        epubs = [f for f in os.listdir(epub_dir) if f.lower().endswith('.epub') and os.path.isfile(os.path.join(epub_dir, f))]
         
         epub = ""
         if epubs:
-            print(f"\nEncontramos {len(epubs)} arquivo(s) EPUB na pasta atual:")
+            print(f"\nEncontramos {len(epubs)} arquivo(s) EPUB na pasta '{epub_dir}':")
             for idx, f in enumerate(epubs):
                 print(f"  {idx + 1}: {f}")
             print("  0: Digitar caminho manualmente...")
             
             selection = input(f"Selecione o arquivo (0-{len(epubs)}) [padrão: 1]: ").strip()
             if not selection:
-                epub = os.path.join(current_dir, epubs[0])
+                epub = os.path.join(epub_dir, epubs[0])
             elif selection == '0':
                 epub = input("Digite o caminho do arquivo EPUB: ").strip().strip('"')
             else:
                 try:
                     sel_idx = int(selection) - 1
                     if 0 <= sel_idx < len(epubs):
-                        epub = os.path.join(current_dir, epubs[sel_idx])
+                        epub = os.path.join(epub_dir, epubs[sel_idx])
                     else:
                         print("Opção inválida. Digite o caminho manualmente.")
                         epub = input("Digite o caminho do arquivo EPUB: ").strip().strip('"')
@@ -726,12 +731,13 @@ def main():
                     cleaned_sel = selection.strip('"')
                     if os.path.exists(cleaned_sel):
                         epub = cleaned_sel
-                    elif os.path.exists(os.path.join(current_dir, cleaned_sel)):
-                        epub = os.path.join(current_dir, cleaned_sel)
+                    elif os.path.exists(os.path.join(epub_dir, cleaned_sel)):
+                        epub = os.path.join(epub_dir, cleaned_sel)
                     else:
                         print("Entrada inválida. Digite o caminho manualmente.")
                         epub = input("Digite o caminho do arquivo EPUB: ").strip().strip('"')
         else:
+            print(f"\nNenhum arquivo EPUB encontrado na pasta '{epub_dir}'.")
             epub = input("Digite o caminho do arquivo EPUB: ").strip().strip('"')
             
         if not epub or not os.path.exists(epub):
@@ -782,7 +788,9 @@ def main():
         output = input("Digite o caminho do PDF de saída (deixe em branco para automático): ").strip().strip('"')
         if not output:
             ch_suffix = f"_cap_{ch_filter.replace(',', '_')}" if ch_filter else ""
-            output = os.path.splitext(epub)[0] + f"{ch_suffix}_imprimir.pdf"
+            base_epub_name = os.path.basename(epub)
+            name_without_ext = os.path.splitext(base_epub_name)[0]
+            output = os.path.join(pdf_dir, f"{name_without_ext}{ch_suffix}_imprimir.pdf")
             
         sig_size = 16
         if mode == "booklet":
@@ -815,7 +823,9 @@ def main():
         output_pdf = args.output
         if not output_pdf:
             ch_suffix = f"_cap_{args.chapters.replace(',', '_')}" if args.chapters else ""
-            output_pdf = os.path.splitext(args.epub)[0] + f"{ch_suffix}_imprimir.pdf"
+            base_epub_name = os.path.basename(args.epub)
+            name_without_ext = os.path.splitext(base_epub_name)[0]
+            output_pdf = os.path.join(pdf_dir, f"{name_without_ext}{ch_suffix}_imprimir.pdf")
             
         run_pipeline(
             epub_path=args.epub,

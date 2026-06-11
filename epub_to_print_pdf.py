@@ -625,6 +625,45 @@ def run_pipeline(epub_path, output_pdf_path, font_size, margin, font_family, mod
         opf_dir = os.path.dirname(opf_rel_path)
         toc_map = parse_toc(temp_dir, opf_rel_path)
         
+        # Definir caminho do PDF de saída dinamicamente se não especificado
+        if not output_pdf_path:
+            base_epub_name = os.path.basename(epub_path)
+            name_without_ext = os.path.splitext(base_epub_name)[0]
+            
+            # Divide o nome por espaços, sublinhados ou hifens e pega as 3 primeiras partes
+            parts = [p.strip() for p in re.split(r'[\s_\-]+', name_without_ext) if p.strip()]
+            book_short_name = "_".join(parts[:3])
+            if len(book_short_name) > 30:
+                book_short_name = book_short_name[:30].rstrip('_')
+                
+            if chapters_filter:
+                selected_indices = parse_chapters_selection(chapters_filter, total_chapters)
+                if len(selected_indices) == 1:
+                    idx = selected_indices[0]
+                    cap_title = get_chapter_title(temp_dir, opf_dir, chapter_hrefs[idx], idx, toc_map)
+                    # Sanitiza o título do capítulo
+                    cap_title_clean = re.sub(r'[\\/*?:"<>|]', "", cap_title)
+                    cap_title_clean = re.sub(r'[\s_\-]+', "_", cap_title_clean).strip('_')
+                    if len(cap_title_clean) > 15:
+                        cap_title_clean = cap_title_clean[:15].rstrip('_')
+                    ch_suffix = f"_Cap{idx+1:02d}_{cap_title_clean}"
+                else:
+                    is_sequential = all(selected_indices[i] + 1 == selected_indices[i+1] for i in range(len(selected_indices)-1))
+                    if is_sequential:
+                        ch_suffix = f"_Cap{selected_indices[0]+1:02d}-{selected_indices[-1]+1:02d}"
+                    else:
+                        ch_list_str = "_".join(f"{i+1:02d}" for i in selected_indices[:3])
+                        if len(selected_indices) > 3:
+                            ch_list_str += "_etc"
+                        ch_suffix = f"_Cap{ch_list_str}"
+            else:
+                ch_suffix = "_Completo"
+                
+            pdf_dir = "pdf"
+            os.makedirs(pdf_dir, exist_ok=True)
+            output_pdf_path = os.path.join(pdf_dir, f"{book_short_name}{ch_suffix}.pdf")
+            print(f"Caminho do PDF de saída definido automaticamente: {output_pdf_path}")
+            
         if chapters_filter:
             selected_indices = parse_chapters_selection(chapters_filter, total_chapters)
             print(f"Filtro aplicado: capítulos {', '.join(str(i+1) for i in selected_indices)}")
@@ -787,10 +826,7 @@ def main():
         
         output = input("Digite o caminho do PDF de saída (deixe em branco para automático): ").strip().strip('"')
         if not output:
-            ch_suffix = f"_cap_{ch_filter.replace(',', '_')}" if ch_filter else ""
-            base_epub_name = os.path.basename(epub)
-            name_without_ext = os.path.splitext(base_epub_name)[0]
-            output = os.path.join(pdf_dir, f"{name_without_ext}{ch_suffix}_imprimir.pdf")
+            output = None
             
         sig_size = 16
         if mode == "booklet":
@@ -822,10 +858,7 @@ def main():
             
         output_pdf = args.output
         if not output_pdf:
-            ch_suffix = f"_cap_{args.chapters.replace(',', '_')}" if args.chapters else ""
-            base_epub_name = os.path.basename(args.epub)
-            name_without_ext = os.path.splitext(base_epub_name)[0]
-            output_pdf = os.path.join(pdf_dir, f"{name_without_ext}{ch_suffix}_imprimir.pdf")
+            output_pdf = None
             
         run_pipeline(
             epub_path=args.epub,

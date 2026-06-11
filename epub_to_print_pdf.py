@@ -809,37 +809,58 @@ def main():
         print("-> Deixe em branco para processar o livro completo")
         ch_filter = input("Capítulos [padrão: todos]: ").strip()
         
-        print("\nEscolha o modo de imposição:")
-        print("1: Corte e Empilhamento (Cut & Stack) - [Recomendado para cortar no meio com régua]")
-        print("2: Sequencial Simples (2-up) - [Folha A4 inteira sem cortar, leitura esquerda -> direita]")
-        print("3: Livreto (Booklet) - [Para dobrar a folha A4 ao meio sem cortar]")
-        opt = input("Selecione o modo [padrão: 1]: ").strip()
+        print("\nEscolha o formato de impressão (Template):")
+        print("[1] Livreto Dobrado (Booklet) - Para dobrar as folhas ao meio e grampear/costurar.")
+        print("    ➔ Imposição: booklet (cadernos de 16 páginas) | Margem: 15mm | Fonte: 12.5pt")
+        print("[2] Cortado e Blocado (Cut & Stack) - Para cortar ao meio e colar/espiralar.")
+        print("    ➔ Imposição: cut-stack | Margem: 15mm | Fonte: 12.5pt")
+        print("[3] Personalizado (Avançado) - Permite escolher margem, fonte e imposição manualmente.")
+        template_opt = input("Selecione a opção [padrão: 2]: ").strip()
         
-        mode = "cut-stack"
-        if opt == "2":
-            mode = "sequencial"
-        elif opt == "3":
-            mode = "booklet"
+        if not template_opt:
+            template_opt = "2"
             
-        font_size = input("Digite o tamanho da fonte [padrão: 12.5pt]: ").strip() or "12.5pt"
-        margin = input("Digite a margem da página [padrão: 15mm]: ").strip() or "15mm"
+        sig_size = 16
+        font_size = "12.5pt"
+        margin = "15mm"
+        mode = "cut-stack"
         
+        if template_opt == "1":
+            mode = "booklet"
+            sig_size = 16
+        elif template_opt == "3":
+            print("\nEscolha o modo de imposição:")
+            print("1: Corte e Empilhamento (Cut & Stack) - [Recomendado para cortar no meio com régua]")
+            print("2: Sequencial Simples (2-up) - [Folha A4 inteira sem cortar, leitura esquerda -> direita]")
+            print("3: Livreto (Booklet) - [Para dobrar a folha A4 ao meio sem cortar]")
+            opt = input("Selecione o modo [padrão: 1]: ").strip()
+            
+            mode = "cut-stack"
+            if opt == "2":
+                mode = "sequencial"
+            elif opt == "3":
+                mode = "booklet"
+                
+            font_size = input("Digite o tamanho da fonte [padrão: 12.5pt]: ").strip() or "12.5pt"
+            margin = input("Digite a margem da página [padrão: 15mm]: ").strip() or "15mm"
+            
+            if mode == "booklet":
+                sig_in = input("Digite o tamanho do caderno (múltiplo de 4) [padrão: 16]: ").strip()
+                if sig_in:
+                    try:
+                        sig_size = int(sig_in)
+                        if sig_size % 4 != 0:
+                            print("Erro: O tamanho do caderno deve ser múltiplo de 4. Usando padrão 16.")
+                            sig_size = 16
+                    except ValueError:
+                        sig_size = 16
+        else:
+            mode = "cut-stack"
+            
         output = input("Digite o caminho do PDF de saída (deixe em branco para automático): ").strip().strip('"')
         if not output:
             output = None
             
-        sig_size = 16
-        if mode == "booklet":
-            sig_in = input("Digite o tamanho do caderno (múltiplo de 4) [padrão: 16]: ").strip()
-            if sig_in:
-                try:
-                    sig_size = int(sig_in)
-                    if sig_size % 4 != 0:
-                        print("Erro: O tamanho do caderno deve ser múltiplo de 4. Usando padrão 16.")
-                        sig_size = 16
-                except ValueError:
-                    sig_size = 16
-                    
         run_pipeline(
             epub_path=epub,
             output_pdf_path=output,

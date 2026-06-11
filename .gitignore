@@ -1,0 +1,5 @@
+__pycache__/
+.antigravitycli/
+.gemini/
+*.epub
+*.pdf

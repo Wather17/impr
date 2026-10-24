@@ -21,11 +21,14 @@ Este projeto consiste em um script Python que automatiza a conversão de livros 
 ## 📦 Requisitos
 
 1. **Python 3** instalado.
-2. Biblioteca **pypdf** instalada:
+2. Biblioteca **pypdf** instalada em um ambiente virtual recomendado:
    ```bash
-   pip install pypdf
+   python3 -m venv .venv
+   .venv/bin/python -m pip install pypdf
    ```
-3. Um navegador baseado no Chromium (**Brave Browser** ou **Microsoft Edge**) instalado nos caminhos padrão do Windows (usado em modo *headless* para renderizar os capítulos HTML em PDF com fidelidade visual).
+3. Um navegador baseado no Chromium instalado para renderizar os capítulos HTML em PDF no modo *headless*.
+
+   O script procura automaticamente Brave, Google Chrome, Chromium e Microsoft Edge, tanto em instalações nativas quanto via Flatpak.
 
 ---
 
@@ -50,8 +53,8 @@ O script suporta tanto um **modo interativo amigável** (com perguntas no termin
 
 Coloque o livro `.epub` na pasta `epub/` e simplesmente execute o script sem parâmetros:
 
-```powershell
-python epub_to_print_pdf.py
+```bash
+.venv/bin/python epub_to_print_pdf.py
 ```
 
 O script guiará você nas seguintes escolhas:
@@ -67,15 +70,15 @@ O script guiará você nas seguintes escolhas:
 
 Passe o caminho do EPUB e os argumentos diretamente para rodar sem interações:
 
-```powershell
+```bash
 # Exemplo 1: Processar apenas o capítulo 1 no modo cut-stack (corte e empilhamento)
-python epub_to_print_pdf.py epub\livro.epub -c 1 --mode cut-stack
+.venv/bin/python epub_to_print_pdf.py epub/livro.epub -c 1 --mode cut-stack
 
 # Exemplo 2: Processar capítulos 1 a 5 no modo livreto (booklet) com caderno de 16 páginas
-python epub_to_print_pdf.py epub\livro.epub -c 1-5 --mode booklet --signature-size 16
+.venv/bin/python epub_to_print_pdf.py epub/livro.epub -c 1-5 --mode booklet --signature-size 16
 
 # Exemplo 3: Customizar margens e fonte para o livro inteiro
-python epub_to_print_pdf.py epub\livro.epub -m "20mm" -f "14pt" --font-family "sans-serif"
+.venv/bin/python epub_to_print_pdf.py epub/livro.epub -m "20mm" -f "14pt" --font-family "sans-serif"
 ```
 
 #### Parâmetros Disponíveis:
@@ -87,26 +90,28 @@ python epub_to_print_pdf.py epub\livro.epub -m "20mm" -f "14pt" --font-family "s
 - `--mode`: Modo de imposição (`cut-stack`, `sequencial`, `booklet`).
 - `-s`, `--signature-size`: Tamanho da assinatura para livreto (deve ser múltiplo de 4, padrão: `16`).
 - `-c`, `--chapters`: Filtro de capítulos (ex: `'1-3'`, `'2,4'`, `'5'`).
-- `--browser`: Caminho customizado para o executável do Brave ou Edge.
+- `--browser`: Caminho ou nome customizado do executável Chromium.
 
 ---
 
-## ⚡ Atalho no PowerShell (Alias)
+## ⚡ Atalho no Zsh
 
-Para rodar o utilitário a partir de **qualquer diretório** do seu sistema usando o comando `impr`, adicione o seguinte atalho ao perfil do seu terminal:
+Para rodar o utilitário a partir de **qualquer diretório** usando o comando `impr`, adicione a função abaixo ao `~/.zshrc`:
 
-1. Abra o arquivo de perfil do PowerShell com o comando:
-   ```powershell
-   notepad $PROFILE
+1. Abra o arquivo de configuração do Zsh com o comando:
+   ```bash
+   nvim ~/.zshrc
    ```
 2. Cole a função abaixo no final do arquivo:
-   ```powershell
-   function Invoke-Impr { & python "C:\Users\55689\Documents\impr\epub_to_print_pdf.py" @args }
-   Set-Alias impr Invoke-Impr
+   ```zsh
+   impr() {
+       /home/henrique/projetos/impr/.venv/bin/python \
+           /home/henrique/projetos/impr/epub_to_print_pdf.py "$@"
+   }
    ```
 3. Salve, feche o editor e recarregue o perfil na aba atual do terminal:
-   ```powershell
-   . $PROFILE
+   ```bash
+   source ~/.zshrc
    ```
 
-A partir de agora, basta digitar `impr` de qualquer diretório que o script executará contextualizado na pasta atual!
+A partir de agora, basta digitar `impr` de qualquer diretório. O modo interativo usará as pastas `epub/` e `pdf/` deste projeto, enquanto caminhos informados explicitamente continuarão sendo aceitos.

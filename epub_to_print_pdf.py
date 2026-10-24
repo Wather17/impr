@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 import os
 import sys
 import re
@@ -9,24 +11,93 @@ import posixpath
 import urllib.parse
 import xml.etree.ElementTree as ET
 import argparse
+from pathlib import Path
 from pypdf import PdfReader, PdfWriter, PageObject, Transformation
 
+
+PROJECT_DIR = Path(__file__).resolve().parent
+
+NATIVE_BROWSER_NAMES = (
+    "brave-browser",
+    "brave",
+    "google-chrome-stable",
+    "google-chrome",
+    "chromium",
+    "chromium-browser",
+    "microsoft-edge-stable",
+    "microsoft-edge",
+)
+
+FLATPAK_BROWSER_IDS = (
+    "com.brave.Browser",
+    "com.google.Chrome",
+    "org.chromium.Chromium",
+    "com.microsoft.Edge",
+)
+
+
 def find_browser():
-    """Busca automaticamente caminhos comuns do Brave e Edge no Windows."""
-    paths = [
-        # Brave Browser
-        r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
-        r"C:\Program Files (x86)\BraveSoftware\Brave-Browser\Application\brave.exe",
-        os.path.expandvars(r"%LOCALAPPDATA%\BraveSoftware\Brave-Browser\Application\brave.exe"),
-        # Microsoft Edge
-        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
-        os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\Edge\Application\msedge.exe"),
-    ]
-    for p in paths:
-        if os.path.exists(p):
-            return p
+    """Encontra um navegador Chromium instalado nativamente ou via Flatpak."""
+    for browser_name in NATIVE_BROWSER_NAMES:
+        browser_path = shutil.which(browser_name)
+        if browser_path:
+            return [browser_path]
+
+    flatpak_path = shutil.which("flatpak")
+    if flatpak_path:
+        for app_id in FLATPAK_BROWSER_IDS:
+            try:
+                result = subprocess.run(
+                    [flatpak_path, "info", app_id],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=5,
+                    check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                continue
+
+            if result.returncode == 0:
+                return [flatpak_path, "run", app_id]
+
     return None
+
+
+def normalize_browser_command(browser_path=None):
+    """Normaliza um executável informado ou descobre um navegador disponível."""
+    if browser_path:
+        browser_path = os.path.expanduser(browser_path)
+        resolved_path = shutil.which(browser_path)
+        if resolved_path:
+            return [resolved_path]
+        raise RuntimeError(
+            f"Navegador não encontrado ou sem permissão de execução: {browser_path}"
+        )
+
+    browser_command = find_browser()
+    if browser_command:
+        return browser_command
+
+    raise RuntimeError(
+        "Não foi possível encontrar um navegador Chromium compatível. "
+        "Instale Brave, Chrome, Chromium ou Edge (nativo ou Flatpak), "
+        "ou informe o caminho com --browser."
+    )
+
+
+def get_css_font_stack(font_family):
+    """Retorna uma pilha CSS compatível com as fontes disponíveis no Linux."""
+    normalized_family = font_family.strip().lower()
+    generic_stacks = {
+        "serif": 'serif, "Noto Serif", "DejaVu Serif"',
+        "sans-serif": 'sans-serif, "Liberation Sans", "Noto Sans"',
+        "monospace": 'monospace, "DejaVu Sans Mono"',
+    }
+    if normalized_family in generic_stacks:
+        return generic_stacks[normalized_family]
+
+    escaped_family = font_family.strip().replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped_family}", serif, "Noto Serif", "DejaVu Serif"'
 
 def find_opf_path(temp_dir):
     """Encontra o arquivo .opf a partir do container.xml."""
@@ -266,6 +337,7 @@ def adjust_image_sources(html_content, cap_zip_path):
 def consolidate_chapters(temp_dir, opf_rel_path, chapter_hrefs, output_html_path, font_size, margin, font_family):
     """Extrai o body de todos os capítulos selecionados, corrige referências e gera um HTML único."""
     opf_dir = os.path.dirname(opf_rel_path)
+    font_stack = get_css_font_stack(font_family)
     
     injected_css = f"""
     @media print {{
@@ -275,7 +347,7 @@ def consolidate_chapters(temp_dir, opf_rel_path, chapter_hrefs, output_html_path
       }}
     }}
     body {{
-      font-family: "{font_family}", serif !important;
+      font-family: {font_stack} !important;
       font-size: {font_size} !important;
       line-height: 1.5 !important;
       color: #000000 !important;
@@ -285,13 +357,13 @@ def consolidate_chapters(temp_dir, opf_rel_path, chapter_hrefs, output_html_path
       padding: 0 !important;
     }}
     p, span, div, li, td {{
-      font-family: "{font_family}", serif !important;
+      font-family: {font_stack} !important;
       font-size: {font_size} !important;
       line-height: 1.5 !important;
       text-align: justify !important;
     }}
     h1, h2, h3, h4, h5, h6 {{
-      font-family: "{font_family}", serif !important;
+      font-family: {font_stack} !important;
       color: #000000 !important;
       page-break-after: avoid !important;
       break-after: avoid !important;
@@ -358,25 +430,59 @@ def consolidate_chapters(temp_dir, opf_rel_path, chapter_hrefs, output_html_path
     with open(output_html_path, 'w', encoding='utf-8') as f:
         f.write(full_html)
 
-def convert_html_to_pdf(html_path, pdf_path, browser_path):
-    """Invoca o navegador em modo Headless para gerar o PDF intermediário A5."""
+def convert_html_to_pdf(html_path, pdf_path, browser_command, browser_work_dir=None):
+    """Invoca um navegador Chromium em modo headless para gerar um PDF."""
+    html_path = os.path.abspath(os.fspath(html_path))
+    pdf_path = os.path.abspath(os.fspath(pdf_path))
+    browser_args = list(browser_command)
+
+    # Flatpak precisa receber acesso ao diretório temporário onde ficam os
+    # HTMLs e PDFs intermediários usados pelo pipeline.
+    is_flatpak = (
+        len(browser_args) >= 2
+        and os.path.basename(browser_args[0]) == "flatpak"
+        and browser_args[1] == "run"
+    )
+    if browser_work_dir and is_flatpak:
+        filesystem_arg = f"--filesystem={os.path.abspath(browser_work_dir)}"
+        browser_args = browser_args[:2] + [filesystem_arg] + browser_args[2:]
+
     args = [
-        browser_path,
+        *browser_args,
         "--headless",
         "--disable-gpu",
         f"--print-to-pdf={pdf_path}",
         "--no-margins",
         "--no-pdf-header-footer",
         "--print-to-pdf-no-header",
-        html_path
     ]
-    result = subprocess.run(args, capture_output=True, text=True)
+
+    if browser_work_dir:
+        browser_profile_dir = os.path.join(browser_work_dir, "browser-profile")
+        os.makedirs(browser_profile_dir, exist_ok=True)
+        args.append(f"--user-data-dir={browser_profile_dir}")
+
+    args.append(Path(html_path).as_uri())
+
+    try:
+        result = subprocess.run(args, capture_output=True, text=True, check=False)
+    except FileNotFoundError as error:
+        raise RuntimeError(f"Executável do navegador não encontrado: {args[0]}") from error
+    except PermissionError as error:
+        raise RuntimeError(f"Sem permissão para executar o navegador: {args[0]}") from error
+
     if result.returncode != 0:
         print("Erro durante a conversão do navegador:")
-        print(result.stderr)
+        print(result.stderr or result.stdout)
         raise RuntimeError(f"O navegador falhou com código {result.returncode}")
 
-def generate_page_numbers_pdf(num_pages, output_pdf_path, browser_path, temp_dir):
+    if not os.path.exists(pdf_path):
+        raise RuntimeError(
+            f"O navegador terminou sem gerar o PDF esperado: {pdf_path}"
+        )
+
+
+def generate_page_numbers_pdf(num_pages, output_pdf_path, browser_command, temp_dir):
     """Gera um PDF A5 contendo apenas os números das páginas centralizados no rodapé."""
     html_path = os.path.join(temp_dir, "numbers.html")
     
@@ -402,7 +508,7 @@ def generate_page_numbers_pdf(num_pages, output_pdf_path, browser_path, temp_dir
     body {{
       margin: 0;
       padding: 0;
-      font-family: Arial, sans-serif;
+      font-family: "Liberation Sans", "Noto Sans", sans-serif;
     }}
     .page-container {{
       width: 148mm;
@@ -433,7 +539,12 @@ def generate_page_numbers_pdf(num_pages, output_pdf_path, browser_path, temp_dir
     with open(html_path, 'w', encoding='utf-8') as f:
         f.write(html_content)
         
-    convert_html_to_pdf(html_path, output_pdf_path, browser_path)
+    convert_html_to_pdf(
+        html_path,
+        output_pdf_path,
+        browser_command,
+        browser_work_dir=temp_dir,
+    )
 
 def merge_page_to_half(target_page, source_page, is_right, a4_width=841.89, a4_height=595.275):
     """Posiciona e escala uma página A5 em uma das metades da folha A4 Paisagem."""
@@ -547,10 +658,7 @@ def impose_pdf(input_pdf_path, output_pdf_path, mode, signature_size=16, line_pa
 
 def run_pipeline(epub_path, output_pdf_path, font_size, margin, font_family, mode, signature_size, chapters_filter=None, browser_path=None):
     """Coordena todas as etapas do processo."""
-    if not browser_path:
-        browser_path = find_browser()
-        if not browser_path:
-            raise RuntimeError("Não foi possível encontrar nenhum navegador compatível (Brave ou Edge).")
+    browser_command = normalize_browser_command(browser_path)
             
     print(f"\n[+] Processando: {os.path.basename(epub_path)}")
     if chapters_filter:
@@ -603,7 +711,12 @@ def run_pipeline(epub_path, output_pdf_path, font_size, margin, font_family, mod
         with open(html_line_path, 'w', encoding='utf-8') as f:
             f.write(line_html_content)
             
-        convert_html_to_pdf(html_line_path, pdf_line_path, browser_path)
+        convert_html_to_pdf(
+            html_line_path,
+            pdf_line_path,
+            browser_command,
+            browser_work_dir=temp_dir,
+        )
         
         line_reader = PdfReader(pdf_line_path)
         line_page = line_reader.pages[0]
@@ -654,9 +767,14 @@ def run_pipeline(epub_path, output_pdf_path, font_size, margin, font_family, mod
             else:
                 ch_suffix = "_Completo"
                 
-            pdf_dir = "pdf"
-            os.makedirs(pdf_dir, exist_ok=True)
-            output_pdf_path = os.path.join(pdf_dir, f"{book_short_name}{ch_suffix}.pdf")
+            pdf_dir = PROJECT_DIR / "pdf"
+            pdf_dir.mkdir(parents=True, exist_ok=True)
+            output_pdf_path = str(pdf_dir / f"{book_short_name}{ch_suffix}.pdf")
+        else:
+            output_pdf_path = os.path.abspath(os.path.expanduser(output_pdf_path))
+            output_parent = os.path.dirname(output_pdf_path)
+            if output_parent:
+                os.makedirs(output_parent, exist_ok=True)
         if chapters_filter:
             selected_indices = parse_chapters_selection(chapters_filter, total_chapters)
             chapter_hrefs = [chapter_hrefs[i] for i in selected_indices]
@@ -675,7 +793,12 @@ def run_pipeline(epub_path, output_pdf_path, font_size, margin, font_family, mod
         
         # 4. Gerar o PDF A5 bruto (sem paginação no rodapé)
         temp_pdf_a5_raw = os.path.join(temp_dir, "temp_a5_raw.pdf")
-        convert_html_to_pdf(html_consolidated, temp_pdf_a5_raw, browser_path)
+        convert_html_to_pdf(
+            html_consolidated,
+            temp_pdf_a5_raw,
+            browser_command,
+            browser_work_dir=temp_dir,
+        )
         
         # 5. Ler as páginas A5 para gerar o PDF de numeração
         reader_a5 = PdfReader(temp_pdf_a5_raw)
@@ -683,7 +806,12 @@ def run_pipeline(epub_path, output_pdf_path, font_size, margin, font_family, mod
         
         # 6. Gerar PDF contendo apenas os números das páginas nas mesmas dimensões A5
         temp_pdf_numbers = os.path.join(temp_dir, "temp_numbers.pdf")
-        generate_page_numbers_pdf(num_pages_logical, temp_pdf_numbers, browser_path, temp_dir)
+        generate_page_numbers_pdf(
+            num_pages_logical,
+            temp_pdf_numbers,
+            browser_command,
+            temp_dir,
+        )
         
         # 7. Mesclar os números no PDF A5 bruto
         reader_numbers = PdfReader(temp_pdf_numbers)
@@ -717,20 +845,27 @@ def main():
     parser.add_argument("--mode", default="cut-stack", choices=["cut-stack", "sequencial", "booklet"], help="Modo de imposição (padrão: cut-stack).")
     parser.add_argument("-s", "--signature-size", type=int, default=16, help="Tamanho do caderno para livreto, deve ser múltiplo de 4 (padrão: 16).")
     parser.add_argument("-c", "--chapters", help="Intervalo de capítulos a processar (ex: '1-3', '2,4', '5'). Padrão: todos.")
-    parser.add_argument("--browser", help="Caminho para o executável do Brave ou Edge.")
+    parser.add_argument(
+        "--browser",
+        help="Caminho ou nome do executável Chromium usado para gerar os PDFs.",
+    )
     
     args = parser.parse_args()
     
     # Garantir que as pastas epub e pdf existam
-    epub_dir = "epub"
-    pdf_dir = "pdf"
-    os.makedirs(epub_dir, exist_ok=True)
-    os.makedirs(pdf_dir, exist_ok=True)
+    epub_dir = PROJECT_DIR / "epub"
+    pdf_dir = PROJECT_DIR / "pdf"
+    epub_dir.mkdir(parents=True, exist_ok=True)
+    pdf_dir.mkdir(parents=True, exist_ok=True)
     
     if not args.epub:
         print("=== CONVERSOR DE EPUB PARA PDF DE IMPRESSÃO ECONÔMICA ===")
         
-        epubs = [f for f in os.listdir(epub_dir) if f.lower().endswith('.epub') and os.path.isfile(os.path.join(epub_dir, f))]
+        epubs = [
+            f
+            for f in os.listdir(epub_dir)
+            if f.lower().endswith('.epub') and (epub_dir / f).is_file()
+        ]
         
         epub = ""
         if epubs:
@@ -741,14 +876,14 @@ def main():
             
             selection = input(f"Selecione o arquivo (0-{len(epubs)}) [padrão: 1]: ").strip()
             if not selection:
-                epub = os.path.join(epub_dir, epubs[0])
+                epub = str(epub_dir / epubs[0])
             elif selection == '0':
                 epub = input("Digite o caminho do arquivo EPUB: ").strip().strip('"')
             else:
                 try:
                     sel_idx = int(selection) - 1
                     if 0 <= sel_idx < len(epubs):
-                        epub = os.path.join(epub_dir, epubs[sel_idx])
+                        epub = str(epub_dir / epubs[sel_idx])
                     else:
                         print("Opção inválida. Digite o caminho manualmente.")
                         epub = input("Digite o caminho do arquivo EPUB: ").strip().strip('"')
@@ -756,8 +891,8 @@ def main():
                     cleaned_sel = selection.strip('"')
                     if os.path.exists(cleaned_sel):
                         epub = cleaned_sel
-                    elif os.path.exists(os.path.join(epub_dir, cleaned_sel)):
-                        epub = os.path.join(epub_dir, cleaned_sel)
+                    elif (epub_dir / cleaned_sel).exists():
+                        epub = str(epub_dir / cleaned_sel)
                     else:
                         print("Entrada inválida. Digite o caminho manualmente.")
                         epub = input("Digite o caminho do arquivo EPUB: ").strip().strip('"')

@@ -11,6 +11,7 @@ import posixpath
 import urllib.parse
 import xml.etree.ElementTree as ET
 import argparse
+from dataclasses import dataclass
 from html import escape
 from html.parser import HTMLParser
 from pathlib import Path
@@ -36,6 +37,16 @@ FLATPAK_BROWSER_IDS = (
     "org.chromium.Chromium",
     "com.microsoft.Edge",
 )
+
+
+@dataclass
+class EPUBContext:
+    """Arquivos temporários e metadados reutilizáveis de um EPUB extraído."""
+
+    temp_dir: str
+    opf_rel_path: str
+    chapter_hrefs: list
+    toc_map: dict
 
 
 def find_browser():
@@ -127,6 +138,27 @@ def find_opf_path(temp_dir):
         return rootfile.get('full-path')
     
     raise FileNotFoundError("Caminho do arquivo OPF não especificado no container.xml.")
+
+
+def prepare_epub(epub_path):
+    """Extrai o EPUB e prepara os metadados usados pela prévia e pelo pipeline."""
+    temp_dir = tempfile.mkdtemp()
+    try:
+        with zipfile.ZipFile(epub_path, 'r') as zip_ref:
+            zip_ref.extractall(temp_dir)
+
+        opf_rel_path = find_opf_path(temp_dir)
+        chapter_hrefs = parse_opf(temp_dir, opf_rel_path)
+        toc_map = parse_toc(temp_dir, opf_rel_path)
+        return EPUBContext(
+            temp_dir=temp_dir,
+            opf_rel_path=opf_rel_path,
+            chapter_hrefs=chapter_hrefs,
+            toc_map=toc_map,
+        )
+    except Exception:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        raise
 
 def parse_opf(temp_dir, opf_rel_path):
     """Lê o OPF, extrai os itens do manifesto e a ordem de leitura do spine."""
@@ -850,16 +882,19 @@ def impose_pdf(input_pdf_path, output_pdf_path, mode, signature_size=16, line_pa
     with open(output_pdf_path, 'wb') as out_f:
         writer.write(out_f)
 
-def run_pipeline(epub_path, output_pdf_path, font_size, margin, font_family, mode, signature_size, chapters_filter=None, browser_path=None):
+def run_pipeline(epub_path, output_pdf_path, font_size, margin, font_family, mode, signature_size, chapters_filter=None, browser_path=None, epub_context=None):
     """Coordena todas as etapas do processo."""
-    browser_command = normalize_browser_command(browser_path)
-            
-    print(f"\n[+] Processando: {os.path.basename(epub_path)}")
-    if chapters_filter:
-        print(f"[+] Capítulos selecionados: {chapters_filter}")
-        
-    temp_dir = tempfile.mkdtemp()
+    if epub_context is None:
+        epub_context = prepare_epub(epub_path)
+
+    temp_dir = epub_context.temp_dir
     try:
+        browser_command = normalize_browser_command(browser_path)
+
+        print(f"\n[+] Processando: {os.path.basename(epub_path)}")
+        if chapters_filter:
+            print(f"[+] Capítulos selecionados: {chapters_filter}")
+
         # 1. Gerar o PDF temporário contendo apenas a linha de corte vertical central
         html_line_path = os.path.join(temp_dir, "line.html")
         pdf_line_path = os.path.join(temp_dir, "line.pdf")
@@ -915,17 +950,13 @@ def run_pipeline(epub_path, output_pdf_path, font_size, margin, font_family, mod
         line_reader = PdfReader(pdf_line_path)
         line_page = line_reader.pages[0]
         
-        # 2. Extrair EPUB
-        with zipfile.ZipFile(epub_path, 'r') as zip_ref:
-            zip_ref.extractall(temp_dir)
-            
-        opf_rel_path = find_opf_path(temp_dir)
-        
-        chapter_hrefs = parse_opf(temp_dir, opf_rel_path)
+        # 2. Usar os metadados preparados antes da prévia ou pelo CLI
+        opf_rel_path = epub_context.opf_rel_path
+        chapter_hrefs = list(epub_context.chapter_hrefs)
         total_chapters = len(chapter_hrefs)
         
         opf_dir = os.path.dirname(opf_rel_path)
-        toc_map = parse_toc(temp_dir, opf_rel_path)
+        toc_map = epub_context.toc_map
         
         # Definir caminho do PDF de saída dinamicamente se não especificado
         if not output_pdf_path:
@@ -1022,6 +1053,65 @@ def run_pipeline(epub_path, output_pdf_path, font_size, margin, font_family, mod
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
+def collect_interactive_options():
+    """Coleta as opções de conversão no modo interativo."""
+    print("\nSelecione o(s) capítulo(s) que você deseja imprimir:")
+    print("-> Digite um intervalo como '2-4' (para capítulos 2, 3 e 4)")
+    print("-> Digite capítulos separados por vírgula como '1,3,5'")
+    print("-> Deixe em branco para processar o livro completo")
+    chapters_filter = input("Capítulos [padrão: todos]: ").strip()
+
+    print("\nEscolha o formato de impressão (Template):")
+    print("[1] Livreto Dobrado (Booklet) - Para dobrar as folhas ao meio e grampear/costurar.")
+    print("    ➔ Imposição: booklet (cadernos de 16 páginas) | Margem: 15mm | Fonte: 12.5pt")
+    print("[2] Cortado e Blocado (Cut & Stack) - Para cortar ao meio e colar/espiralar.")
+    print("    ➔ Imposição: cut-stack | Margem: 15mm | Fonte: 12.5pt")
+    print("[3] Personalizado (Avançado) - Permite escolher margem, fonte e imposição manualmente.")
+    template_opt = input("Selecione a opção [padrão: 2]: ").strip() or "2"
+
+    sig_size = 16
+    font_size = "12.5pt"
+    margin = "15mm"
+    mode = "cut-stack"
+
+    if template_opt == "1":
+        mode = "booklet"
+    elif template_opt == "3":
+        print("\nEscolha o modo de imposição:")
+        print("1: Corte e Empilhamento (Cut & Stack) - [Recomendado para cortar no meio com régua]")
+        print("2: Sequencial Simples (2-up) - [Folha A4 inteira sem cortar, leitura esquerda -> direita]")
+        print("3: Livreto (Booklet) - [Para dobrar a folha A4 ao meio sem cortar]")
+        opt = input("Selecione o modo [padrão: 1]: ").strip()
+
+        if opt == "2":
+            mode = "sequencial"
+        elif opt == "3":
+            mode = "booklet"
+
+        font_size = input("Digite o tamanho da fonte [padrão: 12.5pt]: ").strip() or "12.5pt"
+        margin = input("Digite a margem da página [padrão: 15mm]: ").strip() or "15mm"
+
+        if mode == "booklet":
+            sig_in = input("Digite o tamanho do caderno (múltiplo de 4) [padrão: 16]: ").strip()
+            if sig_in:
+                try:
+                    sig_size = int(sig_in)
+                    validate_signature_size(sig_size)
+                except (TypeError, ValueError):
+                    print("Erro: O tamanho do caderno deve ser um múltiplo de 4 maior que zero. Usando padrão 16.")
+                    sig_size = 16
+
+    output = input("Digite o caminho do PDF de saída (deixe em branco para automático): ").strip().strip('"')
+    return (
+        chapters_filter,
+        font_size,
+        margin,
+        mode,
+        sig_size,
+        output or None,
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description="Conversor de EPUB para PDF otimizado para impressão econômica (4 páginas por folha A4 frente/verso).")
     parser.add_argument("epub", nargs="?", help="Caminho do arquivo EPUB de entrada.")
@@ -1091,97 +1181,48 @@ def main():
             print(f"Erro: Arquivo '{epub}' não encontrado.")
             sys.exit(1)
             
-        temp_dir = tempfile.mkdtemp()
         try:
-            with zipfile.ZipFile(epub, 'r') as zip_ref:
-                zip_ref.extractall(temp_dir)
-            opf_rel_path = find_opf_path(temp_dir)
-            chapter_hrefs = parse_opf(temp_dir, opf_rel_path)
-            opf_dir = os.path.dirname(opf_rel_path)
-            
-            toc_map = parse_toc(temp_dir, opf_rel_path)
-            
-            print(f"\nDetectamos {len(chapter_hrefs)} capítulos neste livro:")
-            for idx, href in enumerate(chapter_hrefs):
-                title = get_chapter_title(temp_dir, opf_dir, href, idx, toc_map)
-                print(f"  {idx + 1}: {title}")
-        except Exception as e:
-            print(f"Erro ao ler os capítulos do livro: {e}")
+            epub_context = prepare_epub(epub)
+        except Exception as error:
+            print(f"Erro ao ler os capítulos do livro: {error}")
             sys.exit(1)
+
+        try:
+            opf_dir = os.path.dirname(epub_context.opf_rel_path)
+            print(f"\nDetectamos {len(epub_context.chapter_hrefs)} capítulos neste livro:")
+            for idx, href in enumerate(epub_context.chapter_hrefs):
+                title = get_chapter_title(
+                    epub_context.temp_dir,
+                    opf_dir,
+                    href,
+                    idx,
+                    epub_context.toc_map,
+                )
+                print(f"  {idx + 1}: {title}")
+
+            (
+                ch_filter,
+                font_size,
+                margin,
+                mode,
+                sig_size,
+                output,
+            ) = collect_interactive_options()
+
+            run_pipeline(
+                epub_path=epub,
+                output_pdf_path=output,
+                font_size=font_size,
+                margin=margin,
+                font_family="serif",
+                mode=mode,
+                signature_size=sig_size,
+                chapters_filter=ch_filter,
+                browser_path=None,
+                epub_context=epub_context,
+            )
         finally:
-            shutil.rmtree(temp_dir, ignore_errors=True)
-            
-        print("\nSelecione o(s) capítulo(s) que você deseja imprimir:")
-        print("-> Digite um intervalo como '2-4' (para capítulos 2, 3 e 4)")
-        print("-> Digite capítulos separados por vírgula como '1,3,5'")
-        print("-> Deixe em branco para processar o livro completo")
-        ch_filter = input("Capítulos [padrão: todos]: ").strip()
-        
-        print("\nEscolha o formato de impressão (Template):")
-        print("[1] Livreto Dobrado (Booklet) - Para dobrar as folhas ao meio e grampear/costurar.")
-        print("    ➔ Imposição: booklet (cadernos de 16 páginas) | Margem: 15mm | Fonte: 12.5pt")
-        print("[2] Cortado e Blocado (Cut & Stack) - Para cortar ao meio e colar/espiralar.")
-        print("    ➔ Imposição: cut-stack | Margem: 15mm | Fonte: 12.5pt")
-        print("[3] Personalizado (Avançado) - Permite escolher margem, fonte e imposição manualmente.")
-        template_opt = input("Selecione a opção [padrão: 2]: ").strip()
-        
-        if not template_opt:
-            template_opt = "2"
-            
-        sig_size = 16
-        font_size = "12.5pt"
-        margin = "15mm"
-        mode = "cut-stack"
-        
-        if template_opt == "1":
-            mode = "booklet"
-            sig_size = 16
-        elif template_opt == "3":
-            print("\nEscolha o modo de imposição:")
-            print("1: Corte e Empilhamento (Cut & Stack) - [Recomendado para cortar no meio com régua]")
-            print("2: Sequencial Simples (2-up) - [Folha A4 inteira sem cortar, leitura esquerda -> direita]")
-            print("3: Livreto (Booklet) - [Para dobrar a folha A4 ao meio sem cortar]")
-            opt = input("Selecione o modo [padrão: 1]: ").strip()
-            
-            mode = "cut-stack"
-            if opt == "2":
-                mode = "sequencial"
-            elif opt == "3":
-                mode = "booklet"
-                
-            font_size = input("Digite o tamanho da fonte [padrão: 12.5pt]: ").strip() or "12.5pt"
-            margin = input("Digite a margem da página [padrão: 15mm]: ").strip() or "15mm"
-            
-            if mode == "booklet":
-                sig_in = input("Digite o tamanho do caderno (múltiplo de 4) [padrão: 16]: ").strip()
-                if sig_in:
-                    try:
-                        sig_size = int(sig_in)
-                        try:
-                            validate_signature_size(sig_size)
-                        except ValueError:
-                            print("Erro: O tamanho do caderno deve ser um múltiplo de 4 maior que zero. Usando padrão 16.")
-                            sig_size = 16
-                    except ValueError:
-                        sig_size = 16
-        else:
-            mode = "cut-stack"
-            
-        output = input("Digite o caminho do PDF de saída (deixe em branco para automático): ").strip().strip('"')
-        if not output:
-            output = None
-            
-        run_pipeline(
-            epub_path=epub,
-            output_pdf_path=output,
-            font_size=font_size,
-            margin=margin,
-            font_family="serif",
-            mode=mode,
-            signature_size=sig_size,
-            chapters_filter=ch_filter,
-            browser_path=None
-        )
+            shutil.rmtree(epub_context.temp_dir, ignore_errors=True)
     else:
         try:
             validate_signature_size(args.signature_size)

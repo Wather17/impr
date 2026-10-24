@@ -21,10 +21,10 @@ Este projeto consiste em um script Python que automatiza a conversão de livros 
 ## 📦 Requisitos
 
 1. **Python 3** instalado.
-2. Biblioteca **pypdf** instalada em um ambiente virtual recomendado:
+2. Dependências de execução instaladas em um ambiente virtual recomendado:
    ```bash
    python3 -m venv .venv
-   .venv/bin/python -m pip install pypdf
+   .venv/bin/python -m pip install -r requirements.txt
    ```
 3. Um navegador baseado no Chromium instalado para renderizar os capítulos HTML em PDF no modo *headless*.
 
@@ -40,6 +40,10 @@ impr/
 ├── pdf/                  # Pasta onde os PDFs finais gerados são salvos automaticamente
 ├── .gitignore            # Ignora temporários (__pycache__) e arquivos epub/pdf do Git
 ├── README.md             # Esta documentação do projeto
+├── requirements.txt      # Dependência de execução
+├── requirements-dev.txt  # Dependências para testes
+├── pytest.ini            # Configuração do pytest
+├── tests/                # Testes automatizados
 └── epub_to_print_pdf.py  # Script Python principal
 ```
 
@@ -115,3 +119,14 @@ Para rodar o utilitário a partir de **qualquer diretório** usando o comando `i
    ```
 
 A partir de agora, basta digitar `impr` de qualquer diretório. O modo interativo usará as pastas `epub/` e `pdf/` deste projeto, enquanto caminhos informados explicitamente continuarão sendo aceitos.
+
+## 🧪 Testes
+
+Para instalar as dependências de desenvolvimento e executar a suíte:
+
+```bash
+.venv/bin/python -m pip install -r requirements-dev.txt
+.venv/bin/python -m pytest -q
+```
+
+Os testes unitários não exigem Brave, Chrome, Chromium ou Edge instalado.

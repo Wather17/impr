@@ -1,132 +1,169 @@
 # Conversor de EPUB para PDF de Impressão Econômica (`impr`)
 
-Este projeto consiste em um script Python que automatiza a conversão de livros digitais no formato **EPUB** para arquivos **PDF** prontos e otimizados para impressão econômica frente e verso em folhas A4 (tamanho A5 impresso lado a lado com imposição e linha de corte central tracejada).
-
----
+Este projeto converte livros digitais no formato **EPUB** em arquivos **PDF** otimizados para impressão econômica frente e verso em folhas A4. O resultado usa páginas A5 lado a lado, imposição configurável e linha de corte central tracejada.
 
 ## 🚀 Funcionalidades
 
-- **Layout A5 em Folha A4**: Posiciona automaticamente duas páginas A5 por face de folha A4 em formato Paisagem.
-- **Vários Modos de Imposição**:
-  - **Corte e Empilhamento (`cut-stack`)** *(Recomendado)*: Ideal para cortar as folhas impressas ao meio com guilhotina ou estilete e empilhar a metade esquerda sobre a direita, mantendo a leitura contínua.
-  - **Livreto (`booklet`)**: Prepara as páginas em cadernos (assinaturas) de tamanho customizável (ex: 16 páginas) para dobrar as folhas A4 ao meio e costurar ou grampear.
-  - **Sequencial (`sequencial`)**: Posiciona as páginas lado a lado em ordem de leitura normal.
-- **Filtro de Capítulos**: Permite selecionar capítulos específicos para imprimir (ex: `'1-3'`, `'2,5'`) ou processar o livro completo.
-- **Customização Visual**: Ajuste de tamanho de fonte, margem e família da fonte (serif/sans-serif).
-- **Numeração Automática**: Insere rodapés de numeração de páginas centralizados de forma independente e limpa.
-- **Linha de Corte**: Desenha uma linha central cinza tracejada para auxiliar no corte exato das páginas.
+- **Layout A5 em folha A4**: posiciona duas páginas A5 por face de uma folha A4 em formato paisagem.
+- **Modos de imposição**:
+  - **Corte e Empilhamento (`cut-stack`)** *(recomendado)*: para cortar as folhas ao meio e empilhar as metades.
+  - **Livreto (`booklet`)**: prepara cadernos de tamanho configurável para dobrar e grampear ou costurar.
+  - **Sequencial (`sequencial`)**: posiciona as páginas lado a lado em ordem de leitura normal.
+- **Filtro de capítulos**: seleciona capítulos como `1-3` ou `2,5`, ou processa o livro completo.
+- **Customização visual**: ajusta tamanho da fonte, margem e família tipográfica.
+- **Numeração automática**: insere números de página no rodapé.
+- **Linha de corte**: desenha uma linha central tracejada para auxiliar o corte.
 
----
+## 📦 Requisitos do sistema
 
-## 📦 Requisitos
+- Linux com Bash.
+- Python **3.9 ou superior**.
+- Suporte ao módulo `venv` instalado para a versão do Python usada.
+- Um navegador baseado em Chromium para renderizar HTML em PDF no modo *headless*.
 
-1. **Python 3** instalado.
-2. Dependências de execução instaladas em um ambiente virtual recomendado:
-   ```bash
-   python3 -m venv .venv
-   .venv/bin/python -m pip install -r requirements.txt
-   ```
-3. Um navegador baseado no Chromium instalado para renderizar os capítulos HTML em PDF no modo *headless*.
+O projeto procura automaticamente por Brave, Google Chrome, Chromium e Microsoft Edge, tanto em instalações nativas quanto via Flatpak. O navegador é uma dependência externa: o projeto detecta e orienta, mas não instala pacotes do sistema ou navegadores automaticamente.
 
-   O script procura automaticamente Brave, Google Chrome, Chromium e Microsoft Edge, tanto em instalações nativas quanto via Flatpak.
+Se o módulo `venv` não estiver disponível, instale o pacote correspondente na sua distribuição — normalmente chamado `python3-venv` — e repita a instalação. Essa etapa é responsabilidade do sistema e não usa `sudo` automaticamente.
 
----
+## 📥 Instalação recomendada
+
+A instalação é feita por usuário, mantém a `.venv` dentro do checkout e não altera arquivos de configuração do Bash ou Zsh.
+
+A partir da raiz do checkout:
+
+```bash
+bash scripts/install-linux.sh
+```
+
+O instalador:
+
+- cria ou reutiliza `.venv`;
+- instala as dependências de execução;
+- cria `epub/` e `pdf/`;
+- instala o launcher `impr` em `~/.local/bin/`;
+- informa se `~/.local/bin` ainda não estiver no `PATH`.
+
+Se o diretório não estiver no `PATH` da sessão atual, use o comando exibido pelo instalador. Para tornar a configuração permanente, adicione manualmente `export PATH="$HOME/.local/bin:$PATH"` ao perfil do seu shell.
+
+Depois da instalação, valide o ambiente antes da primeira conversão:
+
+```bash
+impr --check
+```
+
+O diagnóstico verifica Python, `pypdf`, navegador Chromium e permissões de leitura e escrita em `epub/` e `pdf/`. Ele termina com código zero quando o ambiente está pronto e com código não-zero quando alguma dependência precisa ser corrigida.
+
+### Opções de instalação
+
+```bash
+# Instala também as dependências de desenvolvimento
+bash scripts/install-linux.sh --dev
+
+# Atualiza/reconcilia a instalação existente
+bash scripts/install-linux.sh --update
+
+# Remove somente o launcher gerenciado; preserva código, .venv, epub/ e pdf/
+bash scripts/install-linux.sh --uninstall
+```
+
+O instalador não sobrescreve um arquivo `~/.local/bin/impr` que não tenha sido criado por ele.
+
+### Navegador personalizado
+
+Se o navegador não estiver em um dos nomes detectados automaticamente, informe o executável explicitamente:
+
+```bash
+impr --check --browser /caminho/para/chromium
+impr epub/livro.epub --browser /caminho/para/chromium
+```
 
 ## 📂 Estrutura do Projeto
 
 ```text
 impr/
-├── epub/                 # Pasta dedicada para colocar seus livros .epub de entrada
-├── pdf/                  # Pasta onde os PDFs finais gerados são salvos automaticamente
-├── .gitignore            # Ignora temporários (__pycache__) e arquivos epub/pdf do Git
-├── README.md             # Esta documentação do projeto
-├── requirements.txt      # Dependência de execução
-├── requirements-dev.txt  # Dependências para testes
-├── pytest.ini            # Configuração do pytest
+├── epub/                 # EPUBs de entrada
+├── pdf/                  # PDFs finais gerados automaticamente
+├── .venv/                # Ambiente virtual local, ignorado pelo Git
+├── scripts/
+│   └── install-linux.sh  # Instalador user-scoped
 ├── tests/                # Testes automatizados
+├── README.md             # Esta documentação
+├── requirements.txt      # Dependências de execução
+├── requirements-dev.txt  # Dependências de desenvolvimento
+├── pytest.ini            # Configuração do pytest
 └── epub_to_print_pdf.py  # Script Python principal
 ```
 
----
+Os diretórios automáticos `epub/` e `pdf/` pertencem ao checkout do projeto, não ao diretório atual do terminal. Por isso, executar `impr` de qualquer lugar continua usando os dados do projeto instalado.
 
-## 🛠️ Como Usar
+## 🛠️ Como usar
 
-O script suporta tanto um **modo interativo amigável** (com perguntas no terminal) quanto um **modo CLI de linha de comando** rápido.
+O launcher suporta modo interativo e modo CLI. Coloque um EPUB em `epub/` para usar a seleção automática ou informe um caminho explícito.
 
-### 1. Modo Interativo
-
-Coloque o livro `.epub` na pasta `epub/` e simplesmente execute o script sem parâmetros:
+### 1. Modo interativo
 
 ```bash
-.venv/bin/python epub_to_print_pdf.py
+impr
 ```
 
-O script guiará você nas seguintes escolhas:
-1. Selecionar qual livro deseja processar (dentre os listados na pasta `epub/`).
-2. Digitar o intervalo de capítulos (ou deixar em branco para o livro completo).
-3. Selecionar o modo de imposição (`cut-stack`, `sequencial` ou `booklet`).
-4. Customizar tamanho de fonte e margem da página.
-5. Caminho do arquivo de saída (com geração de nome automática inteligente e reduzida).
+O script permite:
 
----
+1. selecionar o EPUB;
+2. escolher capítulos ou deixar em branco para o livro completo;
+3. selecionar `cut-stack`, `sequencial` ou `booklet`;
+4. customizar fonte e margem;
+5. escolher o caminho do PDF de saída.
 
-### 2. Modo de Linha de Comando (CLI)
-
-Passe o caminho do EPUB e os argumentos diretamente para rodar sem interações:
+### 2. Modo CLI
 
 ```bash
-# Exemplo 1: Processar apenas o capítulo 1 no modo cut-stack (corte e empilhamento)
-.venv/bin/python epub_to_print_pdf.py epub/livro.epub -c 1 --mode cut-stack
+# Processar apenas o capítulo 1 no modo cut-stack
+impr epub/livro.epub -c 1 --mode cut-stack
 
-# Exemplo 2: Processar capítulos 1 a 5 no modo livreto (booklet) com caderno de 16 páginas
-.venv/bin/python epub_to_print_pdf.py epub/livro.epub -c 1-5 --mode booklet --signature-size 16
+# Processar capítulos 1 a 5 no modo livreto
+impr epub/livro.epub -c 1-5 --mode booklet --signature-size 16
 
-# Exemplo 3: Customizar margens e fonte para o livro inteiro
-.venv/bin/python epub_to_print_pdf.py epub/livro.epub -m "20mm" -f "14pt" --font-family "sans-serif"
+# Customizar margem e fonte para o livro inteiro
+impr epub/livro.epub -m "20mm" -f "14pt" --font-family "sans-serif"
 ```
 
-#### Parâmetros Disponíveis:
-- `epub`: Caminho do arquivo EPUB de entrada.
-- `-o`, `--output`: Caminho do PDF de saída (gerado de forma inteligente caso omitido).
-- `-f`, `--font-size`: Tamanho da fonte CSS (padrão: `12.5pt`).
-- `-m`, `--margin`: Margem da página (padrão: `15mm`).
-- `--font-family`: Família da fonte a ser injetada (padrão: `serif`).
-- `--mode`: Modo de imposição (`cut-stack`, `sequencial`, `booklet`).
-- `-s`, `--signature-size`: Tamanho da assinatura para livreto (deve ser múltiplo de 4, padrão: `16`).
-- `-c`, `--chapters`: Filtro de capítulos (ex: `'1-3'`, `'2,4'`, `'5'`).
-- `--browser`: Caminho ou nome customizado do executável Chromium.
+Filtros válidos selecionam exatamente os capítulos indicados. Um intervalo invertido, como `5-2`, é normalizado para `2-5`. Filtros fora do intervalo ou com componentes inválidos interrompem a execução sem gerar PDF.
 
----
+#### Parâmetros disponíveis
 
-## ⚡ Atalho no Zsh
+- `epub`: caminho do arquivo EPUB de entrada.
+- `-o`, `--output`: caminho do PDF de saída; se omitido, o nome é gerado automaticamente.
+- `-f`, `--font-size`: tamanho da fonte CSS (padrão: `12.5pt`).
+- `-m`, `--margin`: margem da página PDF A5 (padrão: `15mm`).
+- `--font-family`: família da fonte (padrão: `serif`).
+- `--mode`: modo de imposição (`cut-stack`, `sequencial` ou `booklet`).
+- `-s`, `--signature-size`: tamanho da assinatura para `booklet`, múltiplo de 4 (padrão: `16`).
+- `-c`, `--chapters`: filtro de capítulos, como `1-3`, `2,4` ou `5`.
+- `--browser`: caminho ou nome customizado do executável Chromium.
+- `--check`: diagnostica o ambiente sem exigir EPUB ou gerar PDF.
 
-Para rodar o utilitário a partir de **qualquer diretório** usando o comando `impr`, adicione a função abaixo ao `~/.zshrc`:
+### Execução direta para desenvolvimento
 
-1. Abra o arquivo de configuração do Zsh com o comando:
-   ```bash
-   nvim ~/.zshrc
-   ```
-2. Cole a função abaixo no final do arquivo:
-   ```zsh
-   impr() {
-       /home/henrique/projetos/impr/.venv/bin/python \
-           /home/henrique/projetos/impr/epub_to_print_pdf.py "$@"
-   }
-   ```
-3. Salve, feche o editor e recarregue o perfil na aba atual do terminal:
-   ```bash
-   source ~/.zshrc
-   ```
+O launcher é o caminho recomendado para uso normal. Para desenvolver ou depurar o script, a execução direta continua disponível:
 
-A partir de agora, basta digitar `impr` de qualquer diretório. O modo interativo usará as pastas `epub/` e `pdf/` deste projeto, enquanto caminhos informados explicitamente continuarão sendo aceitos.
+```bash
+.venv/bin/python epub_to_print_pdf.py epub/livro.epub -c 1
+```
 
 ## 🧪 Testes
 
-Para instalar as dependências de desenvolvimento e executar a suíte:
+Instale as dependências de desenvolvimento e execute a suíte:
 
 ```bash
-.venv/bin/python -m pip install -r requirements-dev.txt
+bash scripts/install-linux.sh --dev
 .venv/bin/python -m pytest -q
 ```
 
-Os testes unitários não exigem Brave, Chrome, Chromium ou Edge instalado.
+Validações auxiliares do instalador:
+
+```bash
+bash -n scripts/install-linux.sh
+bash scripts/install-linux.sh --help
+```
+
+Os testes unitários não exigem Brave, Chrome, Chromium ou Edge instalado; a conversão real exige um navegador compatível.

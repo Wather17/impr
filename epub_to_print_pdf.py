@@ -11,6 +11,8 @@ import posixpath
 import urllib.parse
 import xml.etree.ElementTree as ET
 import argparse
+from html import escape
+from html.parser import HTMLParser
 from pathlib import Path
 from pypdf import PdfReader, PdfWriter, PageObject, Transformation
 
@@ -311,6 +313,168 @@ def parse_chapters_selection(selection_str, total_chapters):
         
     return sorted(list(selected_indices))
 
+
+def is_external_reference(reference):
+    """Indica se uma referência não deve ser rebased para dentro do EPUB."""
+    parsed = urllib.parse.urlsplit(reference)
+    return (
+        reference.startswith('//')
+        or parsed.scheme.lower() in {
+            'data',
+            'file',
+            'http',
+            'https',
+            'javascript',
+            'mailto',
+        }
+        or reference.startswith('#')
+    )
+
+
+def rebase_epub_reference(reference, base_dir):
+    """Converte uma referência relativa do capítulo para a raiz extraída."""
+    if is_external_reference(reference):
+        return reference
+
+    parsed = urllib.parse.urlsplit(reference)
+    decoded_path = urllib.parse.unquote(parsed.path)
+    rebased_path = posixpath.normpath(posixpath.join(base_dir, decoded_path))
+    quoted_path = urllib.parse.quote(rebased_path, safe="/:@-._~!$&'()*+,;=%")
+    return urllib.parse.urlunsplit(
+        ('', '', quoted_path, parsed.query, parsed.fragment)
+    )
+
+
+def rewrite_css_urls(css_content, base_dir):
+    """Rebaseia URLs relativas de CSS inline para a raiz de extração."""
+    url_pattern = re.compile(r'url\(\s*([\'\"]?)(.*?)\1\s*\)', re.IGNORECASE)
+
+    def replace_url(match):
+        quote = match.group(1)
+        reference = match.group(2).strip()
+        rebased_reference = rebase_epub_reference(reference, base_dir)
+        return f'url({quote}{rebased_reference}{quote})'
+
+    return url_pattern.sub(replace_url, css_content)
+
+
+class ChapterHTMLParser(HTMLParser):
+    """Extrai o body e os estilos locais de um capítulo XHTML/HTML."""
+
+    def __init__(self, cap_dir):
+        super().__init__(convert_charrefs=False)
+        self.cap_dir = cap_dir
+        self.in_head = False
+        self.in_body = False
+        self.saw_body = False
+        self.body_parts = []
+        self.head_assets = []
+        self.style_opening = None
+        self.style_parts = []
+
+    def handle_starttag(self, tag, attrs):
+        tag_lower = tag.lower()
+        start_tag = self.get_starttag_text() or f'<{tag}>'
+
+        if tag_lower == 'head':
+            self.in_head = True
+            return
+        if tag_lower == 'body':
+            self.in_body = True
+            self.saw_body = True
+            return
+
+        if tag_lower == 'style' and self.in_head:
+            self.style_opening = start_tag
+            self.style_parts = []
+            return
+
+        if tag_lower == 'link' and self.in_head:
+            attributes = {name.lower(): value for name, value in attrs}
+            rel = attributes.get('rel') or ''
+            href = attributes.get('href')
+            if href and 'stylesheet' in rel.lower().split():
+                rebased_href = rebase_epub_reference(href, self.cap_dir)
+                rebased_attrs = []
+                for name, value in attrs:
+                    if name.lower() == 'href':
+                        value = rebased_href
+                    if value is None:
+                        rebased_attrs.append(f' {name}')
+                    else:
+                        rebased_attrs.append(
+                            f' {name}="{escape(value, quote=True)}"'
+                        )
+                self.head_assets.append(
+                    f'<link{"".join(rebased_attrs)}>'
+                )
+            return
+
+        if self.in_body:
+            self.body_parts.append(start_tag)
+
+    def handle_startendtag(self, tag, attrs):
+        if tag.lower() == 'link' and self.in_head:
+            self.handle_starttag(tag, attrs)
+            return
+        if self.in_body:
+            self.body_parts.append(self.get_starttag_text() or f'<{tag}/>')
+
+    def handle_endtag(self, tag):
+        tag_lower = tag.lower()
+        if tag_lower == 'style' and self.style_opening is not None:
+            style_content = ''.join(self.style_parts)
+            self.head_assets.append(
+                f'{self.style_opening}'
+                f'{rewrite_css_urls(style_content, self.cap_dir)}'
+                '</style>'
+            )
+            self.style_opening = None
+            self.style_parts = []
+            return
+        if tag_lower == 'head':
+            self.in_head = False
+            return
+        if tag_lower == 'body':
+            self.in_body = False
+            return
+        if self.in_body:
+            self.body_parts.append(f'</{tag}>')
+
+    def handle_data(self, data):
+        if self.style_opening is not None:
+            self.style_parts.append(data)
+        elif self.in_body:
+            self.body_parts.append(data)
+
+    def handle_entityref(self, name):
+        self.handle_data(f'&{name};')
+
+    def handle_charref(self, name):
+        self.handle_data(f'&#{name};')
+
+    def handle_comment(self, data):
+        if self.in_body:
+            self.body_parts.append(f'<!--{data}-->')
+
+    def handle_decl(self, decl):
+        if self.in_body:
+            self.body_parts.append(f'<!{decl}>')
+
+
+def extract_chapter_content(content, cap_zip_path):
+    """Extrai o body e os estilos do capítulo, rebasing recursos locais."""
+    cap_dir = posixpath.dirname(cap_zip_path)
+    parser = ChapterHTMLParser(cap_dir)
+    parser.feed(content)
+    parser.close()
+
+    if not parser.saw_body:
+        return content, []
+
+    return ''.join(parser.body_parts), parser.head_assets
+
+
 def adjust_image_sources(html_content, cap_zip_path):
     """Corrige caminhos de imagens locais para serem relativos à raiz de extração do ZIP."""
     cap_dir = posixpath.dirname(cap_zip_path)
@@ -320,10 +484,8 @@ def adjust_image_sources(html_content, cap_zip_path):
         src_match = re.search(r'src=["\'](.*?)["\']', attrs)
         if src_match:
             src = src_match.group(1)
-            if not (src.startswith('http://') or src.startswith('https://') or src.startswith('data:')):
-                src_decoded = urllib.parse.unquote(src)
-                zip_path = posixpath.normpath(posixpath.join(cap_dir, src_decoded))
-                new_src = urllib.parse.quote(zip_path)
+            new_src = rebase_epub_reference(src, cap_dir)
+            if new_src != src:
                 attrs = attrs.replace(src, new_src)
         return f'<img {attrs}>'
         
@@ -332,10 +494,8 @@ def adjust_image_sources(html_content, cap_zip_path):
         href_match = re.search(r'(?:xlink:)?href=["\'](.*?)["\']', attrs)
         if href_match:
             href = href_match.group(1)
-            if not (href.startswith('http://') or href.startswith('https://') or href.startswith('data:')):
-                href_decoded = urllib.parse.unquote(href)
-                zip_path = posixpath.normpath(posixpath.join(cap_dir, href_decoded))
-                new_href = urllib.parse.quote(zip_path)
+            new_href = rebase_epub_reference(href, cap_dir)
+            if new_href != href:
                 attrs = attrs.replace(href, new_href)
         return f'<image {attrs}>'
 
@@ -347,6 +507,7 @@ def consolidate_chapters(temp_dir, opf_rel_path, chapter_hrefs, output_html_path
     """Extrai o body de todos os capítulos selecionados, corrige referências e gera um HTML único."""
     opf_dir = os.path.dirname(opf_rel_path)
     font_stack = get_css_font_stack(font_family)
+    head_assets = []
     
     injected_css = f"""
     @media print {{
@@ -412,8 +573,8 @@ def consolidate_chapters(temp_dir, opf_rel_path, chapter_hrefs, output_html_path
         with open(cap_file_path, 'r', encoding='utf-8', errors='ignore') as f:
             content = f.read()
             
-        body_match = re.search(r'<body[^>]*>(.*?)</body>', content, re.DOTALL | re.IGNORECASE)
-        body_content = body_match.group(1) if body_match else content
+        body_content, chapter_assets = extract_chapter_content(content, cap_zip_path)
+        head_assets.extend(chapter_assets)
         
         body_content = adjust_image_sources(body_content, cap_zip_path)
         
@@ -421,12 +582,14 @@ def consolidate_chapters(temp_dir, opf_rel_path, chapter_hrefs, output_html_path
         bodies.append(f"{break_html}\n<div class='chapter-container'>\n{body_content}\n</div>")
         
     consolidated_content = "\n".join(bodies)
+    head_assets_html = "\n  ".join(head_assets)
     
     full_html = f"""<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
   <title>Livro Otimizado para Impressão</title>
+  {head_assets_html}
   <style>
     {injected_css}
   </style>

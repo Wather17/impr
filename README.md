@@ -1,6 +1,25 @@
-# Conversor de EPUB para PDF de Impressão Econômica (`impr`)
+<div align="center">
+  <h1>📚 impr</h1>
+  <p><strong>EPUB → PDF pronto para impressão econômica</strong></p>
+  <p>Converta livros digitais em PDFs A5 impostos para folhas A4 frente e verso.</p>
+  <p>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2ea44f?style=flat-square" alt="Licença MIT"></a>
+    <img src="https://img.shields.io/badge/python-3.9%2B-3776ab?style=flat-square&logo=python&logoColor=white" alt="Python 3.9 ou superior">
+    <img src="https://img.shields.io/badge/platform-Linux-fcc624?style=flat-square&logo=linux&logoColor=black" alt="Linux">
+  </p>
+</div>
 
 Este projeto converte livros digitais no formato **EPUB** em arquivos **PDF** otimizados para impressão econômica frente e verso em folhas A4. O resultado usa páginas A5 lado a lado, imposição configurável e linha de corte central tracejada.
+
+> Ferramenta local, simples e controlável: os EPUBs e PDFs permanecem no checkout do projeto, e o navegador é apenas uma dependência externa para renderização.
+
+## 🧭 Navegação
+
+- [Funcionalidades](#-funcionalidades)
+- [Instalação](#-instalação-recomendada)
+- [Como usar](#️-como-usar)
+- [Testes](#-testes)
+- [Licença](#-licença)
 
 ## 🚀 Funcionalidades
 
@@ -13,6 +32,18 @@ Este projeto converte livros digitais no formato **EPUB** em arquivos **PDF** ot
 - **Customização visual**: ajusta tamanho da fonte, margem e família tipográfica.
 - **Numeração automática**: insere números de página no rodapé.
 - **Linha de corte**: desenha uma linha central tracejada para auxiliar o corte.
+
+## 🔄 Fluxo de conversão
+
+```text
+EPUB
+  │
+  ├─ extração e seleção de capítulos
+  ├─ consolidação HTML com estilos e imagens
+  ├─ renderização headless pelo Chromium
+  ├─ numeração das páginas A5
+  └─ imposição final em folhas A4
+```
 
 ## 📦 Requisitos do sistema
 
@@ -167,3 +198,7 @@ bash scripts/install-linux.sh --help
 ```
 
 Os testes unitários não exigem Brave, Chrome, Chromium ou Edge instalado; a conversão real exige um navegador compatível.
+
+## 📄 Licença
+
+Distribuído sob a [Licença MIT](LICENSE).

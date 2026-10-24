@@ -99,6 +99,15 @@ def get_css_font_stack(font_family):
     escaped_family = font_family.strip().replace("\\", "\\\\").replace('"', '\\"')
     return f'"{escaped_family}", serif, "Noto Serif", "DejaVu Serif"'
 
+
+def validate_signature_size(signature_size):
+    """Valida o tamanho de caderno usado pelo modo booklet."""
+    if signature_size <= 0 or signature_size % 4 != 0:
+        raise ValueError(
+            "O tamanho do caderno deve ser um múltiplo de 4 maior que zero."
+        )
+
+
 def find_opf_path(temp_dir):
     """Encontra o arquivo .opf a partir do container.xml."""
     container_path = os.path.join(temp_dir, 'META-INF', 'container.xml')
@@ -570,6 +579,9 @@ def merge_page_to_half(target_page, source_page, is_right, a4_width=841.89, a4_h
 
 def impose_pdf(input_pdf_path, output_pdf_path, mode, signature_size=16, line_page=None):
     """Lê o PDF A5 e gera o PDF final A4 Paisagem aplicando a imposição e linha de corte central."""
+    if mode == 'booklet':
+        validate_signature_size(signature_size)
+
     reader = PdfReader(input_pdf_path)
     writer = PdfWriter()
     
@@ -970,8 +982,10 @@ def main():
                 if sig_in:
                     try:
                         sig_size = int(sig_in)
-                        if sig_size % 4 != 0:
-                            print("Erro: O tamanho do caderno deve ser múltiplo de 4. Usando padrão 16.")
+                        try:
+                            validate_signature_size(sig_size)
+                        except ValueError:
+                            print("Erro: O tamanho do caderno deve ser um múltiplo de 4 maior que zero. Usando padrão 16.")
                             sig_size = 16
                     except ValueError:
                         sig_size = 16
@@ -994,8 +1008,10 @@ def main():
             browser_path=None
         )
     else:
-        if args.signature_size % 4 != 0:
-            print("Erro: O tamanho do caderno (--signature-size) deve ser múltiplo de 4.")
+        try:
+            validate_signature_size(args.signature_size)
+        except ValueError as error:
+            print(f"Erro: {error}")
             sys.exit(1)
             
         output_pdf = args.output

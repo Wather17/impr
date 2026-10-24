@@ -15,7 +15,15 @@ from dataclasses import dataclass
 from html import escape
 from html.parser import HTMLParser
 from pathlib import Path
-from pypdf import PdfReader, PdfWriter, PageObject, Transformation
+
+try:
+    import pypdf
+    from pypdf import PdfReader, PdfWriter, PageObject, Transformation
+    PYPDF_IMPORT_ERROR = None
+except ImportError as error:
+    pypdf = None
+    PdfReader = PdfWriter = PageObject = Transformation = None
+    PYPDF_IMPORT_ERROR = error
 
 
 PROJECT_DIR = Path(__file__).resolve().parent
@@ -96,6 +104,93 @@ def normalize_browser_command(browser_path=None):
         "Instale Brave, Chrome, Chromium ou Edge (nativo ou Flatpak), "
         "ou informe o caminho com --browser."
     )
+
+
+def check_environment(browser_path=None):
+    """Retorna verificações do ambiente sem iniciar a conversão."""
+    checks = []
+
+    python_version = ".".join(str(part) for part in sys.version_info[:3])
+    python_ok = sys.version_info >= (3, 9)
+    python_detail = f"{sys.executable} (Python {python_version})"
+    if not python_ok:
+        python_detail += "; necessário Python 3.9 ou superior"
+    checks.append(("Python", python_ok, python_detail))
+
+    if PYPDF_IMPORT_ERROR is not None:
+        checks.append(
+            (
+                "pypdf",
+                False,
+                "não importado; reinstale requirements.txt na .venv",
+            )
+        )
+    else:
+        pypdf_version = getattr(pypdf, "__version__", "desconhecida")
+        pypdf_ok = pypdf_version.split(".", 1)[0] == "6"
+        pypdf_detail = f"versão {pypdf_version}"
+        if not pypdf_ok:
+            pypdf_detail += "; esperado pypdf >=6,<7"
+        checks.append(("pypdf", pypdf_ok, pypdf_detail))
+
+    try:
+        browser_command = normalize_browser_command(browser_path)
+    except RuntimeError as error:
+        checks.append(("Navegador Chromium", False, str(error)))
+    else:
+        checks.append(
+            (
+                "Navegador Chromium",
+                True,
+                "comando: " + " ".join(browser_command),
+            )
+        )
+
+    for directory_name in ("epub", "pdf"):
+        directory = PROJECT_DIR / directory_name
+        directory_ok = directory.is_dir() and os.access(
+            directory,
+            os.R_OK | os.W_OK | os.X_OK,
+        )
+        directory_detail = str(directory)
+        if not directory.is_dir():
+            directory_detail += "; diretório não existe"
+        elif not directory_ok:
+            directory_detail += "; sem permissões de leitura/escrita"
+        else:
+            directory_detail += "; leitura e escrita disponíveis"
+        checks.append((f"Diretório {directory_name}", directory_ok, directory_detail))
+
+    return checks
+
+
+def report_environment_check(browser_path=None):
+    """Exibe o diagnóstico e retorna 0 quando todos os requisitos estão prontos."""
+    print("=== Diagnóstico do ambiente do impr ===")
+    checks = check_environment(browser_path)
+    all_ok = True
+
+    for name, is_ok, detail in checks:
+        status = "OK" if is_ok else "ERRO"
+        print(f"[{status}] {name}: {detail}")
+        all_ok = all_ok and is_ok
+
+    if not all_ok:
+        print("\nOrientações:")
+        if any(name == "pypdf" and not is_ok for name, is_ok, _ in checks):
+            print("- Execute .venv/bin/python -m pip install -r requirements.txt")
+        if any(
+            name == "Navegador Chromium" and not is_ok
+            for name, is_ok, _ in checks
+        ):
+            print("- Instale um navegador Chromium ou informe um executável com --browser")
+        if any(
+            name.startswith("Diretório") and not is_ok
+            for name, is_ok, _ in checks
+        ):
+            print("- Execute o instalador para criar os diretórios ou corrija suas permissões")
+
+    return 0 if all_ok else 1
 
 
 def get_css_font_stack(font_family):
@@ -1145,8 +1240,23 @@ def main():
         "--browser",
         help="Caminho ou nome do executável Chromium usado para gerar os PDFs.",
     )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Verifica o ambiente sem processar um EPUB ou gerar PDF.",
+    )
     
     args = parser.parse_args()
+
+    if args.check:
+        sys.exit(report_environment_check(args.browser))
+
+    if PYPDF_IMPORT_ERROR is not None:
+        print(
+            "Erro: pypdf não está disponível. "
+            "Execute .venv/bin/python -m pip install -r requirements.txt."
+        )
+        sys.exit(1)
     
     # Garantir que as pastas epub e pdf existam
     epub_dir = PROJECT_DIR / "epub"

@@ -555,6 +555,25 @@ def generate_page_numbers_pdf(num_pages, output_pdf_path, browser_command, temp_
         browser_work_dir=temp_dir,
     )
 
+
+def merge_page_numbers(reader_a5, reader_numbers):
+    """Mescla a numeração somente quando os PDFs têm a mesma quantidade de páginas."""
+    content_pages = len(reader_a5.pages)
+    number_pages = len(reader_numbers.pages)
+    if content_pages != number_pages:
+        raise RuntimeError(
+            "A quantidade de páginas do conteúdo "
+            f"({content_pages}) diverge da numeração ({number_pages})."
+        )
+
+    writer_numbered = PdfWriter()
+    for page_a5, page_num in zip(reader_a5.pages, reader_numbers.pages):
+        page_a5.merge_page(page_num)
+        writer_numbered.add_page(page_a5)
+
+    return writer_numbered
+
+
 def merge_page_to_half(target_page, source_page, is_right, a4_width=841.89, a4_height=595.275):
     """Posiciona e escala uma página A5 em uma das metades da folha A4 Paisagem."""
     src_width = float(source_page.mediabox.width)
@@ -827,14 +846,7 @@ def run_pipeline(epub_path, output_pdf_path, font_size, margin, font_family, mod
         
         # 7. Mesclar os números no PDF A5 bruto
         reader_numbers = PdfReader(temp_pdf_numbers)
-        writer_numbered = PdfWriter()
-        
-        pages_to_process = min(len(reader_a5.pages), len(reader_numbers.pages))
-        for i in range(pages_to_process):
-            page_a5 = reader_a5.pages[i]
-            page_num = reader_numbers.pages[i]
-            page_a5.merge_page(page_num)
-            writer_numbered.add_page(page_a5)
+        writer_numbered = merge_page_numbers(reader_a5, reader_numbers)
             
         temp_pdf_a5_numbered = os.path.join(temp_dir, "temp_a5_numbered.pdf")
         with open(temp_pdf_a5_numbered, 'wb') as f_out:

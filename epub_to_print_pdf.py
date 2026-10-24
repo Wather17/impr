@@ -1107,7 +1107,7 @@ def main():
                 print(f"  {idx + 1}: {title}")
         except Exception as e:
             print(f"Erro ao ler os capítulos do livro: {e}")
-            chapter_hrefs = []
+            sys.exit(1)
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
             

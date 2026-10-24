@@ -317,31 +317,42 @@ def parse_chapters_selection(selection_str, total_chapters):
     for part in parts:
         part = part.strip()
         if not part:
-            continue
+            raise ValueError(
+                f"Filtro de capítulos inválido '{selection_str}'. "
+                f"Informe capítulos entre 1 e {total_chapters}."
+            )
         if '-' in part:
             try:
-                start_str, end_str = part.split('-')
-                start = int(start_str.strip()) - 1
-                end = int(end_str.strip()) - 1
-                start = max(0, min(start, total_chapters - 1))
-                end = max(0, min(end, total_chapters - 1))
-                for i in range(min(start, end), max(start, end) + 1):
+                start_str, end_str = part.split('-', 1)
+                start = int(start_str.strip())
+                end = int(end_str.strip())
+                if not (1 <= start <= total_chapters and 1 <= end <= total_chapters):
+                    raise ValueError
+                for i in range(min(start, end) - 1, max(start, end)):
                     selected_indices.add(i)
             except ValueError:
-                print(f"Aviso: Intervalo inválido '{part}' ignorado.")
+                raise ValueError(
+                    f"Filtro de capítulos inválido '{part}'. "
+                    f"Use números entre 1 e {total_chapters}."
+                ) from None
         else:
             try:
                 idx = int(part) - 1
                 if 0 <= idx < total_chapters:
                     selected_indices.add(idx)
                 else:
-                    print(f"Aviso: Índice de capítulo {part} fora do limite (1-{total_chapters}) ignorado.")
+                    raise ValueError
             except ValueError:
-                print(f"Aviso: Capítulo inválido '{part}' ignorado.")
+                raise ValueError(
+                    f"Filtro de capítulos inválido '{part}'. "
+                    f"Use números entre 1 e {total_chapters}."
+                ) from None
                 
     if not selected_indices:
-        print("Nenhum capítulo válido selecionado. Processando todo o livro.")
-        return list(range(total_chapters))
+        raise ValueError(
+            f"Filtro de capítulos inválido '{selection_str}'. "
+            f"Informe capítulos entre 1 e {total_chapters}."
+        )
         
     return sorted(list(selected_indices))
 
@@ -889,6 +900,13 @@ def run_pipeline(epub_path, output_pdf_path, font_size, margin, font_family, mod
 
     temp_dir = epub_context.temp_dir
     try:
+        chapter_hrefs = list(epub_context.chapter_hrefs)
+        total_chapters = len(chapter_hrefs)
+        selected_indices = parse_chapters_selection(
+            chapters_filter or "",
+            total_chapters,
+        )
+
         browser_command = normalize_browser_command(browser_path)
 
         print(f"\n[+] Processando: {os.path.basename(epub_path)}")
@@ -952,9 +970,6 @@ def run_pipeline(epub_path, output_pdf_path, font_size, margin, font_family, mod
         
         # 2. Usar os metadados preparados antes da prévia ou pelo CLI
         opf_rel_path = epub_context.opf_rel_path
-        chapter_hrefs = list(epub_context.chapter_hrefs)
-        total_chapters = len(chapter_hrefs)
-        
         opf_dir = os.path.dirname(opf_rel_path)
         toc_map = epub_context.toc_map
         
@@ -970,7 +985,6 @@ def run_pipeline(epub_path, output_pdf_path, font_size, margin, font_family, mod
                 book_short_name = book_short_name[:30].rstrip('_')
                 
             if chapters_filter:
-                selected_indices = parse_chapters_selection(chapters_filter, total_chapters)
                 if len(selected_indices) == 1:
                     idx = selected_indices[0]
                     cap_title = get_chapter_title(temp_dir, opf_dir, chapter_hrefs[idx], idx, toc_map)
@@ -1001,7 +1015,6 @@ def run_pipeline(epub_path, output_pdf_path, font_size, margin, font_family, mod
             if output_parent:
                 os.makedirs(output_parent, exist_ok=True)
         if chapters_filter:
-            selected_indices = parse_chapters_selection(chapters_filter, total_chapters)
             chapter_hrefs = [chapter_hrefs[i] for i in selected_indices]
         
         # 3. HTML temporário consolidado
@@ -1053,13 +1066,19 @@ def run_pipeline(epub_path, output_pdf_path, font_size, margin, font_family, mod
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
-def collect_interactive_options():
+def collect_interactive_options(total_chapters):
     """Coleta as opções de conversão no modo interativo."""
-    print("\nSelecione o(s) capítulo(s) que você deseja imprimir:")
-    print("-> Digite um intervalo como '2-4' (para capítulos 2, 3 e 4)")
-    print("-> Digite capítulos separados por vírgula como '1,3,5'")
-    print("-> Deixe em branco para processar o livro completo")
-    chapters_filter = input("Capítulos [padrão: todos]: ").strip()
+    while True:
+        print("\nSelecione o(s) capítulo(s) que você deseja imprimir:")
+        print("-> Digite um intervalo como '2-4' (para capítulos 2, 3 e 4)")
+        print("-> Digite capítulos separados por vírgula como '1,3,5'")
+        print("-> Deixe em branco para processar o livro completo")
+        chapters_filter = input("Capítulos [padrão: todos]: ").strip()
+        try:
+            parse_chapters_selection(chapters_filter, total_chapters)
+            break
+        except ValueError as error:
+            print(f"Erro: {error}")
 
     print("\nEscolha o formato de impressão (Template):")
     print("[1] Livreto Dobrado (Booklet) - Para dobrar as folhas ao meio e grampear/costurar.")
@@ -1207,7 +1226,7 @@ def main():
                 mode,
                 sig_size,
                 output,
-            ) = collect_interactive_options()
+            ) = collect_interactive_options(len(epub_context.chapter_hrefs))
 
             run_pipeline(
                 epub_path=epub,
@@ -1234,17 +1253,21 @@ def main():
         if not output_pdf:
             output_pdf = None
             
-        run_pipeline(
-            epub_path=args.epub,
-            output_pdf_path=output_pdf,
-            font_size=args.font_size,
-            margin=args.margin,
-            font_family=args.font_family,
-            mode=args.mode,
-            signature_size=args.signature_size,
-            chapters_filter=args.chapters,
-            browser_path=args.browser
-        )
+        try:
+            run_pipeline(
+                epub_path=args.epub,
+                output_pdf_path=output_pdf,
+                font_size=args.font_size,
+                margin=args.margin,
+                font_family=args.font_family,
+                mode=args.mode,
+                signature_size=args.signature_size,
+                chapters_filter=args.chapters,
+                browser_path=args.browser
+            )
+        except ValueError as error:
+            print(f"Erro: {error}")
+            sys.exit(1)
 
 if __name__ == "__main__":
     main()
